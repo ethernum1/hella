@@ -1,0 +1,381 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+
+local ATTR_FLING = "FlingEnabled"
+local ATTR_TARGET = "StickTarget"
+
+if player:GetAttribute(ATTR_FLING) == nil then
+    player:SetAttribute(ATTR_FLING, false)
+end
+
+-- ========== GUI SETUP ==========
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "HelloPondFlingGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 220, 0, 320)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 35)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 16
+title.Text = "hellopond fling" -- เปลี่ยนชื่อสคริปต์ตรงนี้แล้วครับ
+title.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = title
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 24, 0, 24)
+closeButton.Position = UDim2.new(1, -28, 0, 5)
+closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.Font = Enum.Font.SourceSansBold
+closeButton.TextSize = 14
+closeButton.Text = "X"
+closeButton.BorderSizePixel = 0
+closeButton.Parent = mainFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeButton
+
+local listLabel = Instance.new("TextLabel")
+listLabel.Size = UDim2.new(1, -20, 0, 20)
+listLabel.Position = UDim2.new(0, 10, 0, 45)
+listLabel.BackgroundTransparency = 1
+listLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+listLabel.Font = Enum.Font.SourceSans
+listLabel.TextSize = 13
+listLabel.Text = "Select Targets (Multi):"
+listLabel.TextXAlignment = Enum.TextXAlignment.Left
+listLabel.Parent = mainFrame
+
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -20, 0, 180)
+scrollFrame.Position = UDim2.new(0, 10, 0, 67)
+scrollFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.Parent = mainFrame
+
+local scrollCorner = Instance.new("UICorner")
+scrollCorner.CornerRadius = UDim.new(0, 6)
+scrollCorner.Parent = scrollFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.SortOrder = Enum.SortOrder.Name
+listLayout.Padding = UDim.new(0, 2)
+listLayout.Parent = scrollFrame
+
+local actionButton = Instance.new("TextButton")
+actionButton.Size = UDim2.new(1, -20, 0, 36)
+actionButton.Position = UDim2.new(0, 10, 0, 265)
+actionButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+actionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+actionButton.Font = Enum.Font.SourceSansBold
+actionButton.TextSize = 15
+actionButton.Text = "Fling & Stick: 0 Players"
+actionButton.BorderSizePixel = 0
+actionButton.Parent = mainFrame
+
+local actionCorner = Instance.new("UICorner")
+actionCorner.CornerRadius = UDim.new(0, 6)
+actionCorner.Parent = actionButton
+
+-- ========== STATE & CONNECTIONS ==========
+local selectedPlayers = {} 
+local stickConnection = nil
+local playerButtons = {}
+
+local playerAddedConn
+local playerRemovingConn
+local charAddedConn
+
+local function getSelectedCount()
+    local count = 0
+    for _ in pairs(selectedPlayers) do count = count + 1 end
+    return count
+end
+
+-- ========== SAFE SKY PLATFORM ==========
+local skyPlatform = nil
+
+local function createSafePlatform()
+    if not skyPlatform or not skyPlatform.Parent then
+        skyPlatform = Instance.new("Part")
+        skyPlatform.Name = "SafeSkyPlatform"
+        skyPlatform.Size = Vector3.new(50, 2, 50)
+        skyPlatform.Position = Vector3.new(0, 10000, 0)
+        skyPlatform.Anchored = true
+        skyPlatform.CanCollide = true
+        skyPlatform.Transparency = 0.5 
+        skyPlatform.Material = Enum.Material.SmoothPlastic
+        skyPlatform.Color = Color3.fromRGB(0, 200, 100)
+        skyPlatform.Parent = workspace
+    end
+end
+
+local function teleportToSafePlatform()
+    createSafePlatform()
+    local char = player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        char.HumanoidRootPart.CFrame = skyPlatform.CFrame * CFrame.new(0, 4, 0)
+        char.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+        char.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+-- ====================================================
+-- ========== ORIGINAL FLING LOGIC (100% SYNC) ========
+-- ====================================================
+local function startFlingLoop(humanoid)
+    if humanoid == nil then return end
+    local running = true
+
+    local connAttr
+    connAttr = player:GetAttributeChangedSignal(ATTR_FLING):Connect(function()
+        if not player:GetAttribute(ATTR_FLING) then
+            running = false
+            if connAttr then connAttr:Disconnect() end
+        end
+    end)
+
+    while running and humanoid.Parent do
+        local moveVector = Vector3.one * 1e31
+        pcall(function()
+            humanoid:Move(moveVector)
+        end)
+        task.wait(0.1)
+    end
+end
+
+local function onCharacterAdded(character)
+    local humanoid = character:WaitForChild("Humanoid", 5)
+    if not humanoid then return end
+
+    if player:GetAttribute(ATTR_FLING) then
+        task.spawn(function()
+            startFlingLoop(humanoid)
+        end)
+    end
+end
+
+charAddedConn = player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then onCharacterAdded(player.Character) end
+
+local flingAttrConn = player:GetAttributeChangedSignal(ATTR_FLING):Connect(function()
+    if player:GetAttribute(ATTR_FLING) and player.Character then
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            task.spawn(function()
+                startFlingLoop(humanoid)
+            end)
+        end
+    end
+end)
+-- ====================================================
+
+-- ========== COMBINED ACTION LOGIC ==========
+local function stopAction()
+    if stickConnection then
+        stickConnection:Disconnect()
+        stickConnection = nil
+        teleportToSafePlatform()
+    end
+    player:SetAttribute(ATTR_TARGET, "")
+    player:SetAttribute(ATTR_FLING, false) 
+    
+    if actionButton and actionButton.Parent then
+        actionButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+        actionButton.Text = "Fling & Stick: " .. getSelectedCount() .. " Players"
+    end
+end
+
+local function startAction()
+    stopAction()
+
+    local myChar = player.Character
+    if not myChar then return end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+
+    local count = getSelectedCount()
+    if count == 0 then return end
+
+    player:SetAttribute(ATTR_FLING, true)
+    player:SetAttribute(ATTR_TARGET, "MultiTarget")
+    actionButton.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+
+    local targetList = {}
+    local currentIdx = 1
+    local lastSwitchTime = os.clock() 
+    local SWAP_DELAY = 12 
+    
+    local isWaitingOnPlatform = false 
+
+    stickConnection = RunService.Stepped:Connect(function()
+        targetList = {}
+        for _, p in pairs(selectedPlayers) do
+            if p and p.Parent and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                local tHum = p.Character:FindFirstChildOfClass("Humanoid")
+                if tHum and tHum.Health > 0 then
+                    table.insert(targetList, p)
+                end
+            end
+        end
+
+        if #targetList == 0 then 
+            if not isWaitingOnPlatform then
+                isWaitingOnPlatform = true
+                player:SetAttribute(ATTR_FLING, false) 
+                teleportToSafePlatform()
+                actionButton.Text = "Auto Wait: Waiting Respawn..."
+            end
+            return 
+        end
+
+        if isWaitingOnPlatform then
+            isWaitingOnPlatform = false
+            player:SetAttribute(ATTR_FLING, true) 
+        end
+
+        local currentTime = os.clock()
+        if currentTime - lastSwitchTime >= SWAP_DELAY then
+            lastSwitchTime = currentTime
+            currentIdx = currentIdx + 1
+        end
+
+        if currentIdx > #targetList then
+            currentIdx = 1
+        end
+
+        local targetPlayer = targetList[currentIdx]
+        actionButton.Text = string.format("⚔️ Target [%d/%d]: %s", currentIdx, #targetList, targetPlayer.Name)
+
+        local tChar = targetPlayer.Character
+        local mChar = player.Character
+        if not tChar or not mChar then return end
+
+        local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+        local mRoot = mChar:FindFirstChild("HumanoidRootPart")
+        
+        if tRoot and mRoot then
+            mRoot.CFrame = tRoot.CFrame
+        end
+    end)
+end
+
+actionButton.MouseButton1Click:Connect(function()
+    if stickConnection then
+        stopAction()
+    else
+        if getSelectedCount() > 0 then
+            startAction()
+        end
+    end
+end)
+
+-- ========== PLAYER LIST ==========
+local function togglePlayerSelection(p)
+    if selectedPlayers[p.Name] then
+        selectedPlayers[p.Name] = nil
+        if playerButtons[p.Name] then
+            playerButtons[p.Name].BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        end
+    else
+        selectedPlayers[p.Name] = p
+        if playerButtons[p.Name] then
+            playerButtons[p.Name].BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+        end
+    end
+    
+    local count = getSelectedCount()
+    if not stickConnection then
+        actionButton.Text = "Fling & Stick: " .. count .. " Players"
+    end
+end
+
+local function addPlayerButton(p)
+    if p == player then return end
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -4, 0, 28)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    btn.Font = Enum.Font.SourceSans
+    btn.TextSize = 14
+    btn.Text = p.Name
+    btn.BorderSizePixel = 0
+    btn.Parent = scrollFrame
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 4)
+    c.Parent = btn
+
+    playerButtons[p.Name] = btn
+
+    btn.MouseButton1Click:Connect(function()
+        togglePlayerSelection(p)
+    end)
+
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 4)
+end
+
+local function removePlayerButton(p)
+    if playerButtons[p.Name] then
+        playerButtons[p.Name]:Destroy()
+        playerButtons[p.Name] = nil
+        scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 4)
+    end
+    if selectedPlayers[p.Name] then
+        selectedPlayers[p.Name] = nil
+        if stickConnection and getSelectedCount() == 0 then
+            stopAction()
+        elseif not stickConnection then
+            actionButton.Text = "Fling & Stick: " .. getSelectedCount() .. " Players"
+        end
+    end
+end
+
+-- ========== INITIALIZATION & RESPAWN ==========
+for _, p in ipairs(Players:GetPlayers()) do
+    addPlayerButton(p)
+end
+
+playerAddedConn = Players.PlayerAdded:Connect(addPlayerButton)
+playerRemovingConn = Players.PlayerRemoving:Connect(removePlayerButton)
+
+-- ========== DESTROY SCRIPT LOGIC ==========
+closeButton.MouseButton1Click:Connect(function()
+    stopAction()
+    
+    if playerAddedConn then playerAddedConn:Disconnect() end
+    if playerRemovingConn then playerRemovingConn:Disconnect() end
+    if charAddedConn then charAddedConn:Disconnect() end
+    if flingAttrConn then flingAttrConn:Disconnect() end
+    
+    if screenGui then
+        screenGui:Destroy()
+    end
+    
+    if skyPlatform then
+        skyPlatform:Destroy()
+    end
+end)
